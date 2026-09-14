@@ -1,0 +1,285 @@
+// cb-ren-bat：把 CBETA EPUB 的檔名從「經號」改成「經號_經名」。
+//
+// 用法最簡單的形式是把執行檔放進解壓後的 cbeta_epub_2026r2 資料夾裡直接執行，
+// 程式會自動找到同一層的 filelist_*.txt 對照表。
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+const version = "1.0.0"
+
+var (
+	flagDryRun  = flag.Bool("dry-run", false, "只顯示預覽，不實際改名")
+	flagYes     = flag.Bool("yes", false, "略過確認直接執行（供批次腳本使用）")
+	flagRestore = flag.Bool("restore", false, "還原：把「經號_經名」改回「經號」")
+	flagLog     = flag.String("log", "rename_log.csv", "改名紀錄檔路徑，設為空字串則不產生")
+	flagList    = flag.Int("list", 20, "預覽時最多列出幾筆，設為 0 表示全部列出")
+	flagVersion = flag.Bool("version", false, "顯示版本後結束")
+)
+
+// 標準錯誤輸出的警告訊息
+func warnf(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "  ! "+format+"\n", a...)
+}
+
+func main() {
+	initConsole()
+	flag.Usage = usage
+	flag.Parse()
+
+	if *flagVersion {
+		fmt.Printf("cb-ren-bat %s\n", version)
+		return
+	}
+
+	// 沒有帶任何參數時視為「雙擊執行」，結束前會停住等使用者按鍵。
+	interactive := len(os.Args) == 1
+
+	code := run(interactive)
+	if interactive {
+		pause()
+	}
+	os.Exit(code)
+}
+
+func usage() {
+	fmt.Fprintf(os.Stderr, `cb-ren-bat %s — CBETA EPUB 檔名批次轉換工具
+
+用法：
+  cb-ren-bat [選項] [cbeta_epub 資料夾路徑]
+
+不指定資料夾時，依序嘗試「執行檔所在資料夾」與「目前工作目錄」。
+
+選項：
+`, version)
+	flag.PrintDefaults()
+	fmt.Fprintf(os.Stderr, `
+範例：
+  cb-ren-bat                       # 放在 epub 資料夾裡直接執行
+  cb-ren-bat -dry-run ~/Downloads/cbeta_epub_2026r2
+  cb-ren-bat -yes ~/Downloads/cbeta_epub_2026r2
+  cb-ren-bat -restore ~/Downloads/cbeta_epub_2026r2
+`)
+}
+
+func run(interactive bool) int {
+	fmt.Printf("cb-ren-bat %s — CBETA EPUB 檔名批次轉換工具\n\n", version)
+
+	root, err := resolveRoot(flag.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "錯誤：%v\n\n", err)
+		fmt.Fprintln(os.Stderr, "請把本程式放進解壓後的 cbeta_epub_XXXX 資料夾中執行，")
+		fmt.Fprintln(os.Stderr, "或是在命令列指定該資料夾的路徑。")
+		return 1
+	}
+
+	flPath, err := findFileList(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "錯誤：%v\n", err)
+		return 1
+	}
+	fl, err := loadFileList(flPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "錯誤：讀取對照表失敗：%v\n", err)
+		return 1
+	}
+
+	fmt.Printf("資料夾　：%s\n", root)
+	fmt.Printf("對照表　：%s（%d 筆）\n", filepath.Base(flPath), len(fl.Entries))
+	checkVersion(root, fl)
+
+	files, err := collectEpubs(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "錯誤：掃描 epub 檔案失敗：%v\n", err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "\n錯誤：這個資料夾裡找不到任何 .epub 檔案。")
+		return 1
+	}
+	fmt.Printf("EPUB 檔：%d 個\n", len(files))
+	if len(files) != len(fl.Entries) {
+		warnf("epub 數量(%d)與對照表筆數(%d)不一致，可能是解壓不完整或版本不符",
+			len(files), len(fl.Entries))
+	}
+
+	op := "改名"
+	var plan *Plan
+	if *flagRestore {
+		op = "還原"
+		plan = buildRestorePlan(root, fl, files)
+	} else {
+		plan = buildPlan(root, fl, files)
+	}
+	plan.checkExisting()
+
+	fmt.Printf("\n── %s預覽 ─────────────────────────\n", op)
+	printPreview(plan)
+
+	c := plan.Counts()
+	fmt.Printf("\n待%s：%d　略過：%d　衝突：%d\n",
+		op, c[ActRename],
+		c[ActSkipDone]+c[ActSkipNoEntry]+c[ActSkipUnknown], c[ActConflict])
+
+	if c[ActConflict] > 0 {
+		fmt.Println("\n衝突的檔案會原樣保留，不會被覆蓋：")
+		n := 0
+		for _, it := range plan.Items {
+			if it.Action != ActConflict {
+				continue
+			}
+			n++
+			if *flagList > 0 && n > *flagList {
+				fmt.Printf("  …另有 %d 筆\n", c[ActConflict]-*flagList)
+				break
+			}
+			fmt.Printf("  %s/%s → %s（%s）\n", it.Dir, it.OldName, it.NewName, it.Note)
+		}
+	}
+	plan.warnLongPaths()
+
+	if c[ActRename] == 0 {
+		fmt.Println("\n沒有需要處理的檔案，結束。")
+		return 0
+	}
+	if *flagDryRun {
+		fmt.Println("\n(-dry-run 模式，未實際更動任何檔案)")
+		return 0
+	}
+	if !*flagYes && !confirm(fmt.Sprintf("\n確定要%s這 %d 個檔案嗎？", op, c[ActRename])) {
+		fmt.Println("已取消，未更動任何檔案。")
+		return 0
+	}
+
+	logPath := *flagLog
+	if logPath != "" && !filepath.IsAbs(logPath) {
+		logPath = filepath.Join(root, logPath)
+	}
+	logw, err := newLogWriter(logPath, op)
+	if err != nil {
+		warnf("無法建立紀錄檔 %s：%v（改名仍會繼續）", logPath, err)
+		logw, _ = newLogWriter("", op)
+	}
+	defer logw.close()
+
+	fmt.Printf("\n處理中…\n")
+	done, errs := plan.execute(logw)
+	logw.close()
+
+	fmt.Printf("\n完成：%s %d 個檔案。\n", op, done)
+	if logPath != "" {
+		fmt.Printf("紀錄已寫入：%s\n", logPath)
+	}
+	if len(errs) > 0 {
+		fmt.Fprintf(os.Stderr, "\n有 %d 個檔案處理失敗：\n", len(errs))
+		for i, e := range errs {
+			if i >= 10 {
+				fmt.Fprintf(os.Stderr, "  …另有 %d 筆\n", len(errs)-10)
+				break
+			}
+			fmt.Fprintf(os.Stderr, "  %v\n", e)
+		}
+		return 1
+	}
+	return 0
+}
+
+// resolveRoot 決定要處理哪個資料夾。
+// 優先序：命令列參數 > 執行檔所在資料夾 > 目前工作目錄。
+func resolveRoot(arg string) (string, error) {
+	var candidates []string
+	if arg != "" {
+		abs, err := filepath.Abs(arg)
+		if err != nil {
+			return "", err
+		}
+		if !hasFileList(abs) {
+			return "", fmt.Errorf("%s 裡面沒有 filelist_*.txt 對照表", abs)
+		}
+		return abs, nil
+	}
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		candidates = append(candidates, filepath.Dir(exe))
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, wd)
+	}
+	for _, c := range candidates {
+		if hasFileList(c) {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("找不到含有 filelist_*.txt 的資料夾")
+}
+
+func hasFileList(dir string) bool {
+	m, err := filepath.Glob(filepath.Join(dir, "filelist_*.txt"))
+	return err == nil && len(m) > 0
+}
+
+// cbeta_epub_2026r2 → 2026r2
+var reDirVersion = regexp.MustCompile(`cbeta_epub_(.+)$`)
+
+// checkVersion 比對資料夾名稱與對照表檔名中的版本字串是否一致。
+func checkVersion(root string, fl *FileList) {
+	m := reDirVersion.FindStringSubmatch(filepath.Base(root))
+	if m == nil || fl.Version == "" {
+		return
+	}
+	if m[1] != fl.Version {
+		warnf("資料夾版本(%s)與對照表版本(%s)不符，請確認兩者來自同一次下載", m[1], fl.Version)
+	}
+}
+
+func printPreview(plan *Plan) {
+	n := 0
+	total := plan.Counts()[ActRename]
+	for _, it := range plan.Items {
+		if it.Action != ActRename {
+			continue
+		}
+		n++
+		if *flagList > 0 && n > *flagList {
+			fmt.Printf("  …另有 %d 筆（用 -list 0 可列出全部）\n", total-*flagList)
+			break
+		}
+		dir := it.Dir
+		if dir != "" {
+			dir += string(filepath.Separator)
+		}
+		line := fmt.Sprintf("  %s%s → %s", dir, it.OldName, it.NewName)
+		if it.Note != "" {
+			line += "  [" + it.Note + "]"
+		}
+		fmt.Println(line)
+	}
+	if total == 0 {
+		fmt.Println("  （無）")
+	}
+}
+
+func confirm(prompt string) bool {
+	fmt.Printf("%s [y/N] ", prompt)
+	sc := bufio.NewScanner(os.Stdin)
+	if !sc.Scan() {
+		return false
+	}
+	ans := strings.ToLower(strings.TrimSpace(sc.Text()))
+	return ans == "y" || ans == "yes"
+}
+
+func pause() {
+	fmt.Print("\n按 Enter 鍵結束…")
+	bufio.NewReader(os.Stdin).ReadString('\n')
+}

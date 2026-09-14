@@ -1,0 +1,13 @@
+# CBETA 下載的原始資料（體積龐大，不進版控）
+/data/
+
+# 編譯產出
+/dist/
+/cb-ren-bat
+/cb-ren-bat.exe
+
+# 執行時產生的紀錄
+rename_log.csv
+
+# macOS
+.DS_Store
