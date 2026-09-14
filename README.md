@@ -158,4 +158,4 @@ make dist        # 建置全部平台到 dist/
 
 ## 授權
 
-程式碼採 MIT 授權。CBETA 電子佛典的版權宣告請見 <https://www.cbeta.org/copyright.php>。
+程式碼採 MIT 授權。CBETA 電子佛典的版權宣告請見 <https://cbeta.org/copyright>。
