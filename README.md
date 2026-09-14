@@ -25,20 +25,38 @@ docx 與 odt 的結構不同（改名的對象是資料夾而非檔案），而�
 
 ## 下載與使用
 
-1. 到 [Releases](../../releases) 下載對應作業系統的執行檔。
-2. 把執行檔放進解壓後的 `cbeta_epub_2026r2`（或 `cbeta_pdf_1_2026r2` 等）資料夾裡，
+1. 到 [Releases](../../releases) 下載對應作業系統的壓縮檔：
+
+   | 作業系統 | 下載 | 解壓後的執行檔 |
+   | --- | --- | --- |
+   | macOS（Apple Silicon，M 系列） | `…-darwin-arm64.zip` | `cbeta-ebook-renamer.command` |
+   | macOS（Intel） | `…-darwin-amd64.zip` | `cbeta-ebook-renamer.command` |
+   | Windows（一般 x64） | `…-windows-amd64.zip` | `cbeta-ebook-renamer.exe` |
+   | Windows（Arm64） | `…-windows-arm64.zip` | `cbeta-ebook-renamer.exe` |
+   | Linux | `…-linux-amd64.tar.gz` | `cbeta-ebook-renamer` |
+
+2. 解壓縮，把執行檔放進解壓後的 `cbeta_epub_2026r2`（或 `cbeta_pdf_1_2026r2` 等）資料夾裡，
    也就是有 `filelist_2026r2.txt` 的那一層。
 3. 直接雙擊執行。程式會先列出預覽，確認後才會動手。
 
 ```
 cbeta_epub_2026r2/
-├── filelist_2026r2.txt   ← 經號與經名的對照表
-├── cbeta-ebook-renamer   ← 把執行檔放這裡
+├── filelist_2026r2.txt           ← 經號與經名的對照表
+├── cbeta-ebook-renamer.command   ← 把執行檔放這裡（Windows 是 .exe）
 ├── T/
 │   ├── T0001.epub
 │   └── ...
 └── X/
 ```
+
+> **為什麼 macOS 版叫 `.command`？**
+> Finder 是依副檔名決定由哪個程式開啟檔案的。`.command` 會交給「終端機」執行，
+> 這個工具需要終端機視窗來顯示預覽並讓你確認。
+> 若把它改成沒有副檔名、但檔名中帶有點號的名字（例如 `cbeta-ebook-renamer-1.0.0`），
+> macOS 會誤判成未知類型的文件，雙擊時只會跳出「未設定任何應用程式來打開文件」。
+>
+> **為什麼是壓縮檔而不是裸執行檔？**
+> 從瀏覽器直接下載的裸檔不帶執行權限（`+x`），無法雙擊；zip 與 tar 會保留權限位元。
 
 ### 第一次開啟時的安全性提示
 
@@ -48,7 +66,7 @@ cbeta_epub_2026r2/
   接著到 **系統設定 → 隱私權與安全性**，捲到「安全性」區塊，會看到剛才被擋下的項目，
   按「**強制打開**」，然後再雙擊一次即可。
   （舊版 macOS 是按住 Control 點一下執行檔 → 選「打開」；此方式在 Sequoia 之後已失效。）
-  熟悉終端機的話也可以直接執行 `xattr -d com.apple.quarantine cbeta-ebook-renamer`。
+  熟悉終端機的話也可以直接執行 `xattr -d com.apple.quarantine cbeta-ebook-renamer.command`。
 - **Windows**：出現「Windows 已保護您的電腦」時，點「**其他資訊**」→「**仍要執行**」。
 
 ## 命令列用法
@@ -59,6 +77,9 @@ cbeta-ebook-renamer -dry-run ~/Downloads/cbeta_epub_2026r2   # 只預覽，不�
 cbeta-ebook-renamer -yes     ~/Downloads/cbeta_epub_2026r2   # 不詢問直接執行（供腳本使用）
 cbeta-ebook-renamer -restore ~/Downloads/cbeta_epub_2026r2   # 改回原本的經號檔名
 ```
+
+（macOS 的執行檔名為 `cbeta-ebook-renamer.command`，Windows 為 `cbeta-ebook-renamer.exe`，
+在命令列請用實際的檔名。）
 
 | 選項 | 說明 |
 | --- | --- |

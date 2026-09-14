@@ -44,13 +44,18 @@ jobs:
         run: |
           # 執行檔一律叫 cbeta-ebook-renamer，平台資訊放在壓縮檔名上，
           # 這樣 README 裡的指令對每個平台都是照抄就能用。
+          # macOS 版多一個 .command 副檔名，Finder 才會把雙擊交給「終端機」執行。
           EXT=""
-          [ "$GOOS" = "windows" ] && EXT=".exe"
+          case "$GOOS" in
+            windows) EXT=".exe" ;;
+            darwin)  EXT=".command" ;;
+          esac
           go build -trimpath -ldflags="-s -w" -o "cbeta-ebook-renamer${EXT}" .
-          if [ "$GOOS" = "windows" ]; then
-            zip "cbeta-ebook-renamer-${GOOS}-${GOARCH}.zip" "cbeta-ebook-renamer${EXT}" README.md
-          else
+          # 一律打包壓縮檔：瀏覽器下載裸執行檔會失去執行權限，zip 與 tar 則會保留。
+          if [ "$GOOS" = "linux" ]; then
             tar czf "cbeta-ebook-renamer-${GOOS}-${GOARCH}.tar.gz" "cbeta-ebook-renamer${EXT}" README.md
+          else
+            zip -X "cbeta-ebook-renamer-${GOOS}-${GOARCH}.zip" "cbeta-ebook-renamer${EXT}" README.md
           fi
       - uses: actions/upload-artifact@v4
         with:
