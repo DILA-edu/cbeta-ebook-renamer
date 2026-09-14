@@ -62,11 +62,18 @@ cbeta_epub_2026r2/
 
 執行檔沒有經過程式碼簽章，作業系統會先攔下來，這是正常現象：
 
-- **macOS**（Sequoia 15 以後）：雙擊會出現「無法打開，因為無法驗證開發者」，按「完成」，
-  接著到 **系統設定 → 隱私權與安全性**，捲到「安全性」區塊，會看到剛才被擋下的項目，
-  按「**強制打開**」，然後再雙擊一次即可。
-  （舊版 macOS 是按住 Control 點一下執行檔 → 選「打開」；此方式在 Sequoia 之後已失效。）
-  熟悉終端機的話也可以直接執行 `xattr -d com.apple.quarantine cbeta-ebook-renamer.command`。
+- **macOS**（Sequoia 15 以後）：雙擊會跳出
+  「未打開『cbeta-ebook-renamer.command』／Apple 無法驗證…是否為惡意軟體」。
+
+  1. 按「**完成**」。**不要按「丟到垃圾桶」**——那是預設反白的按鈕，按下去檔案就沒了。
+  2. 到 **系統設定 → 隱私權與安全性**，捲到「安全性」區塊，會看到剛才被擋下的項目，
+     按「**強制打開**」。
+  3. 回到 Finder 再雙擊一次即可。
+
+  每台電腦只需做一次。（舊版 macOS 是按住 Control 點一下執行檔 → 選「打開」；
+  此方式在 Sequoia 之後已失效。）
+  熟悉終端機的話也可以直接執行 `xattr -d com.apple.quarantine cbeta-ebook-renamer.command`，
+  效果相同。
 - **Windows**：出現「Windows 已保護您的電腦」時，點「**其他資訊**」→「**仍要執行**」。
 
 ## 命令列用法
