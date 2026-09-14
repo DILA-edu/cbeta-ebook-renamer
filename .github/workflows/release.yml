@@ -42,19 +42,19 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
         run: |
-          # 執行檔一律叫 cb-ren-bat，平台資訊放在壓縮檔名上，
+          # 執行檔一律叫 cbeta-ebook-renamer，平台資訊放在壓縮檔名上，
           # 這樣 README 裡的指令對每個平台都是照抄就能用。
           EXT=""
           [ "$GOOS" = "windows" ] && EXT=".exe"
-          go build -trimpath -ldflags="-s -w" -o "cb-ren-bat${EXT}" .
+          go build -trimpath -ldflags="-s -w" -o "cbeta-ebook-renamer${EXT}" .
           if [ "$GOOS" = "windows" ]; then
-            zip "cb-ren-bat-${GOOS}-${GOARCH}.zip" "cb-ren-bat${EXT}" README.md
+            zip "cbeta-ebook-renamer-${GOOS}-${GOARCH}.zip" "cbeta-ebook-renamer${EXT}" README.md
           else
-            tar czf "cb-ren-bat-${GOOS}-${GOARCH}.tar.gz" "cb-ren-bat${EXT}" README.md
+            tar czf "cbeta-ebook-renamer-${GOOS}-${GOARCH}.tar.gz" "cbeta-ebook-renamer${EXT}" README.md
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: cb-ren-bat-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: cbeta-ebook-renamer-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             *.zip
             *.tar.gz

@@ -17,6 +17,7 @@ const (
 	ActSkipDone                  // 已經是目標檔名，不需處理
 	ActSkipNoEntry               // 對照表中查無此經號
 	ActSkipUnknown               // 檔名不符合經號樣式，無法判斷
+	ActSkipJuan                  // 按卷分檔（docx/odt），本版本不處理
 	ActConflict                  // 目標檔名衝突，不予處理
 )
 
@@ -30,13 +31,15 @@ func (a Action) String() string {
 		return "略過(查無經號)"
 	case ActSkipUnknown:
 		return "略過(檔名無法辨識)"
+	case ActSkipJuan:
+		return "略過(按卷分檔)"
 	case ActConflict:
 		return "衝突"
 	}
 	return "未知"
 }
 
-// Item 是一個 epub 檔案的處理計畫。
+// Item 是一個典籍檔案的處理計畫。
 type Item struct {
 	Dir     string // 相對根目錄的子資料夾，如 T
 	OldName string
@@ -61,8 +64,9 @@ func (p *Plan) Counts() map[Action]int {
 	return c
 }
 
-// collectEpubs 掃出根目錄下所有的 .epub 檔案。
-func collectEpubs(root string) ([]string, error) {
+// collectBooks 掃出根目錄下所有符合指定副檔名的檔案。
+// exts 需為小寫、含點，例如 []string{".epub", ".pdf"}。
+func collectBooks(root string, exts []string) ([]string, error) {
 	var found []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -77,7 +81,7 @@ func collectEpubs(root string) ([]string, error) {
 			}
 			return nil
 		}
-		if strings.EqualFold(filepath.Ext(name), ".epub") {
+		if matchExt(name, exts) {
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
 				return nil
@@ -93,6 +97,16 @@ func collectEpubs(root string) ([]string, error) {
 	return found, nil
 }
 
+func matchExt(name string, exts []string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	for _, e := range exts {
+		if ext == e {
+			return true
+		}
+	}
+	return false
+}
+
 // buildPlan 規劃「經號 → 經號_經名」的改名作業。
 func buildPlan(root string, fl *FileList, files []string) *Plan {
 	p := &Plan{Root: root}
@@ -106,11 +120,19 @@ func buildPlan(root string, fl *FileList, files []string) *Plan {
 			dir = ""
 		}
 		old := filepath.Base(rel)
-		base := strings.TrimSuffix(old, filepath.Ext(old))
+		ext := filepath.Ext(old)
+		base := strings.TrimSuffix(old, ext)
 
-		id, renamed, ok := parseBase(base)
-		if !ok {
+		id, kind := parseBase(base)
+		switch kind {
+		case kindUnknown:
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, Action: ActSkipUnknown})
+			continue
+		case kindJuan:
+			// docx/odt 的按卷分檔，形狀與「經號_經名」相同但語意不同，
+			// 改名會把卷號當成經名蓋掉，必須明確跳過。
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipJuan,
+				Note: "按卷分檔的檔案，本版本尚未支援"})
 			continue
 		}
 		entry, exists := fl.Entries[id]
@@ -119,7 +141,7 @@ func buildPlan(root string, fl *FileList, files []string) *Plan {
 				Note: "對照表中沒有這個經號"})
 			continue
 		}
-		newName, notes := targetName(id, entry.Title)
+		newName, notes := targetName(id, entry.Title, ext)
 		note := strings.Join(notes, "；")
 
 		if old == newName {
@@ -127,7 +149,7 @@ func buildPlan(root string, fl *FileList, files []string) *Plan {
 				Action: ActSkipDone})
 			continue
 		}
-		if renamed {
+		if kind == kindRenamed {
 			// 已改過名但與目前對照表不一致，可能是換了新版 filelist，仍予以更新。
 			note = joinNote(note, "既有檔名與對照表不符，將更新")
 		}
@@ -156,14 +178,21 @@ func buildRestorePlan(root string, fl *FileList, files []string) *Plan {
 			dir = ""
 		}
 		old := filepath.Base(rel)
-		base := strings.TrimSuffix(old, filepath.Ext(old))
+		ext := filepath.Ext(old)
+		base := strings.TrimSuffix(old, ext)
 
-		id, renamed, ok := parseBase(base)
-		if !ok {
+		id, kind := parseBase(base)
+		switch kind {
+		case kindUnknown:
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, Action: ActSkipUnknown})
 			continue
+		case kindJuan:
+			// 若誤把卷號當成經名還原，T0001_001.docx 會變成 T0001.docx，卷號就沒了
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipJuan,
+				Note: "按卷分檔的檔案，本版本尚未支援"})
+			continue
 		}
-		if !renamed {
+		if kind == kindID {
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: old, ID: id,
 				Action: ActSkipDone})
 			continue
@@ -174,7 +203,7 @@ func buildRestorePlan(root string, fl *FileList, files []string) *Plan {
 				Note: "對照表中沒有這個經號"})
 			continue
 		}
-		newName := id + ".epub"
+		newName := id + ext
 		key := dir + "\x00" + strings.ToLower(newName)
 		if prev, dup := taken[key]; dup {
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: newName, ID: id,

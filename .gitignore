@@ -3,8 +3,8 @@
 
 # 編譯產出
 /dist/
-/cb-ren-bat
-/cb-ren-bat.exe
+/cbeta-ebook-renamer
+/cbeta-ebook-renamer.exe
 
 # 執行時產生的紀錄
 rename_log.csv

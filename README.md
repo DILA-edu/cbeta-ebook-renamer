@@ -1,26 +1,39 @@
-# cb-ren-bat
+# cbeta-ebook-renamer
 
-把 CBETA 電子書（EPUB）的檔名從**經號**批次改成**經號＋中文經名**。
+把 CBETA 電子書的檔名從**經號**批次改成**經號＋中文經名**。
 
 ```
 T0001.epub   →   T0001_長阿含經.epub
-T0374.epub   →   T0374_大般涅槃經.epub
+T0374.pdf    →   T0374_大般涅槃經.pdf
 ```
 
-CBETA 官方發佈的 EPUB 一律以經號命名（`T0001.epub`），好處是跨平台、跨語系都不會出問題；
+CBETA 官方發佈的電子書一律以經號命名（`T0001.epub`），好處是跨平台、跨語系都不會出問題；
 但對讀者來說很難從檔名認出是哪一部經。本工具讓有需要的使用者**在自己電腦上**做這個轉換，
 官方的下載檔維持原狀不受影響。
+
+## 支援的格式
+
+| 格式 | 結構 | 支援狀況 |
+| --- | --- | --- |
+| **EPUB** | `T/T0001.epub` | ✅ |
+| **PDF**（分三次下載） | `T/T0001.pdf` | ✅ 三份分開執行即可 |
+| **docx / odt** | `T/T0001/T0001_001.docx`（一部典籍一個資料夾，按卷分檔） | ⏳ 尚未支援 |
+
+docx 與 odt 的結構不同（改名的對象是資料夾而非檔案），而且下載檔中不含對照表，
+需要另一套處理方式，預計於後續版本支援。目前程式遇到 `T0001_001.docx` 這類按卷分檔會**明確略過**，
+不會誤把卷號當成經名。
 
 ## 下載與使用
 
 1. 到 [Releases](../../releases) 下載對應作業系統的執行檔。
-2. 把執行檔放進解壓後的 `cbeta_epub_2026r2` 資料夾裡（就是有 `filelist_2026r2.txt` 的那一層）。
+2. 把執行檔放進解壓後的 `cbeta_epub_2026r2`（或 `cbeta_pdf_1_2026r2` 等）資料夾裡，
+   也就是有 `filelist_2026r2.txt` 的那一層。
 3. 直接雙擊執行。程式會先列出預覽，確認後才會動手。
 
 ```
 cbeta_epub_2026r2/
 ├── filelist_2026r2.txt   ← 經號與經名的對照表
-├── cb-ren-bat            ← 把執行檔放這裡
+├── cbeta-ebook-renamer   ← 把執行檔放這裡
 ├── T/
 │   ├── T0001.epub
 │   └── ...
@@ -35,16 +48,16 @@ cbeta_epub_2026r2/
   接著到 **系統設定 → 隱私權與安全性**，捲到「安全性」區塊，會看到剛才被擋下的項目，
   按「**強制打開**」，然後再雙擊一次即可。
   （舊版 macOS 是按住 Control 點一下執行檔 → 選「打開」；此方式在 Sequoia 之後已失效。）
-  熟悉終端機的話也可以直接執行 `xattr -d com.apple.quarantine cb-ren-bat`。
+  熟悉終端機的話也可以直接執行 `xattr -d com.apple.quarantine cbeta-ebook-renamer`。
 - **Windows**：出現「Windows 已保護您的電腦」時，點「**其他資訊**」→「**仍要執行**」。
 
 ## 命令列用法
 
 ```bash
-cb-ren-bat                                  # 放在 epub 資料夾裡直接執行
-cb-ren-bat -dry-run ~/Downloads/cbeta_epub_2026r2   # 只預覽，不改任何東西
-cb-ren-bat -yes     ~/Downloads/cbeta_epub_2026r2   # 不詢問直接執行（供腳本使用）
-cb-ren-bat -restore ~/Downloads/cbeta_epub_2026r2   # 改回原本的經號檔名
+cbeta-ebook-renamer                                  # 放在 epub 資料夾裡直接執行
+cbeta-ebook-renamer -dry-run ~/Downloads/cbeta_epub_2026r2   # 只預覽，不改任何東西
+cbeta-ebook-renamer -yes     ~/Downloads/cbeta_epub_2026r2   # 不詢問直接執行（供腳本使用）
+cbeta-ebook-renamer -restore ~/Downloads/cbeta_epub_2026r2   # 改回原本的經號檔名
 ```
 
 | 選項 | 說明 |
@@ -54,6 +67,7 @@ cb-ren-bat -restore ~/Downloads/cbeta_epub_2026r2   # 改回原本的經號檔�
 | `-restore` | 還原：把「經號_經名」改回「經號」 |
 | `-log <路徑>` | 改名紀錄檔位置，預設 `rename_log.csv`，設為空字串則不產生 |
 | `-list <數量>` | 預覽時最多列出幾筆，預設 20，設 `0` 列出全部 |
+| `-ext <副檔名>` | 要處理的副檔名，預設 `.epub,.pdf` |
 | `-version` | 顯示版本 |
 
 ## 設計說明
@@ -99,6 +113,10 @@ cb-ren-bat -restore ~/Downloads/cbeta_epub_2026r2   # 改回原本的經號檔�
   程式會對超過 240 字元的路徑提出警告。建議解壓到較短的路徑，例如 `D:\cbeta\`。
 - 對照表以逗號分隔，若未來 CBETA 的經名中出現半形逗號，解析會出錯（目前 4899 筆皆無）。
 - Windows 版本目前只做過交叉編譯與靜態檢查，尚未在實機上實際跑過。
+- docx 與 odt 尚未支援，原因見上方「支援的格式」。
+- PDF 版分三次下載，每一份都附完整的 4899 筆對照表，所以單獨處理某一份時
+  「檔案數少於對照表筆數」是正常的，程式不會為此發出警告。
+  三份的對照表內容完全相同（md5 一致），隨便用哪一份都可以。
 
 ## 從原始碼建置
 

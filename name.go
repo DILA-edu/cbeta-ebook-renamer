@@ -12,6 +12,11 @@ var reBookID = regexp.MustCompile(`^[A-Za-z]{1,3}[0-9]{1,5}[A-Za-z]?$`)
 // 已改名的檔案樣式：經號_經名
 var reRenamed = regexp.MustCompile(`^([A-Za-z]{1,3}[0-9]{1,5}[A-Za-z]?)_(.+)$`)
 
+// 按卷分檔的樣式：經號_卷號，如 T0001_001。
+// docx 與 odt 版本採用這種命名，形狀與「經號_經名」相同，
+// 必須先攔下來，否則會被誤認成已改名的檔案而把卷號當成經名。
+var reJuan = regexp.MustCompile(`^([A-Za-z]{1,3}[0-9]{1,5}[A-Za-z]?)_([0-9]{2,4})$`)
+
 // Windows 不允許出現在檔名中的字元。macOS 只禁止 ':' 與 '/'，取兩者聯集最保險。
 const illegalChars = `\/:*?"<>|`
 
@@ -80,23 +85,37 @@ func sanitizeTitle(title string) (string, []string) {
 	return s, notes
 }
 
-// targetName 依「經號_經名.epub」規則產生新檔名。
-func targetName(id, title string) (string, []string) {
+// targetName 依「經號_經名」規則產生新檔名，ext 是含點的副檔名（如 .epub）。
+func targetName(id, title, ext string) (string, []string) {
 	clean, notes := sanitizeTitle(title)
 	if clean == "" {
 		notes = append(notes, "經名處理後為空字串，維持只用經號")
-		return id + ".epub", notes
+		return id + ext, notes
 	}
-	return id + "_" + clean + ".epub", notes
+	return id + "_" + clean + ext, notes
 }
 
-// parseBase 從主檔名判斷它的經號，以及是否已經改過名。
-func parseBase(base string) (id string, renamed bool, ok bool) {
+// nameKind 是主檔名的類型。
+type nameKind int
+
+const (
+	kindUnknown nameKind = iota // 無法辨識
+	kindID                      // 純經號，如 T0001
+	kindRenamed                 // 已改名，如 T0001_長阿含經
+	kindJuan                    // 按卷分檔，如 T0001_001
+)
+
+// parseBase 從主檔名判斷它的經號與類型。
+func parseBase(base string) (id string, kind nameKind) {
 	if reBookID.MatchString(base) {
-		return base, false, true
+		return base, kindID
+	}
+	// 卷號的判斷必須排在「已改名」前面，兩者的樣式會互相涵蓋
+	if m := reJuan.FindStringSubmatch(base); m != nil {
+		return m[1], kindJuan
 	}
 	if m := reRenamed.FindStringSubmatch(base); m != nil {
-		return m[1], true, true
+		return m[1], kindRenamed
 	}
-	return "", false, false
+	return "", kindUnknown
 }

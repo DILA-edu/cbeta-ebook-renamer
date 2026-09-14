@@ -74,6 +74,50 @@ func TestRestorePlan(t *testing.T) {
 	}
 }
 
+// PDF 與 EPUB 形狀相同，同一套邏輯要能通吃。
+func TestBuildPlanMixedExtensions(t *testing.T) {
+	fl := testFileList()
+	p := buildPlan("/root", fl, []string{"T/T0001.epub", "T/T0001.pdf"})
+	want := map[string]bool{"T0001_長阿含經.epub": true, "T0001_長阿含經.pdf": true}
+	for _, it := range p.Items {
+		if it.Action != ActRename {
+			t.Fatalf("%s 應該要改名，得到 %v", it.OldName, it.Action)
+		}
+		if !want[it.NewName] {
+			t.Errorf("非預期的目標檔名：%s", it.NewName)
+		}
+		delete(want, it.NewName)
+	}
+	if len(want) != 0 {
+		t.Errorf("以下目標檔名沒有產生：%v", want)
+	}
+}
+
+// docx/odt 的按卷分檔絕對不能被當成「已改名」處理。
+// 若誤判，改名會讓 22 卷全部指向同一個檔名，還原則會把卷號整個砍掉。
+func TestJuanFilesAreNeverTouched(t *testing.T) {
+	fl := testFileList()
+	files := []string{"T/T0001/T0001_001.docx", "T/T0001/T0001_002.docx"}
+
+	for _, tc := range []struct {
+		name string
+		p    *Plan
+	}{
+		{"改名", buildPlan("/root", fl, files)},
+		{"還原", buildRestorePlan("/root", fl, files)},
+	} {
+		for _, it := range tc.p.Items {
+			if it.Action != ActSkipJuan {
+				t.Errorf("%s模式：%s 應標記為 ActSkipJuan，得到 %v（NewName=%q）",
+					tc.name, it.OldName, it.Action, it.NewName)
+			}
+			if it.NewName != "" {
+				t.Errorf("%s模式：%s 不應產生目標檔名，卻得到 %q", tc.name, it.OldName, it.NewName)
+			}
+		}
+	}
+}
+
 // 還原模式不可以動到對照表中沒有的檔案（例如使用者自己放進來的書）。
 func TestRestorePlanSkipsUnknownID(t *testing.T) {
 	fl := testFileList()
@@ -98,7 +142,7 @@ func TestExecuteRoundTrip(t *testing.T) {
 	fl := testFileList()
 	logw, _ := newLogWriter("", "改名")
 
-	files, err := collectEpubs(root)
+	files, err := collectBooks(root, []string{".epub", ".pdf"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +159,7 @@ func TestExecuteRoundTrip(t *testing.T) {
 	}
 
 	// 再跑一次，應該完全不動作（冪等）
-	files, _ = collectEpubs(root)
+	files, _ = collectBooks(root, []string{".epub", ".pdf"})
 	p2 := buildPlan(root, fl, files)
 	p2.checkExisting()
 	if n := p2.Counts()[ActRename]; n != 0 {
@@ -123,7 +167,7 @@ func TestExecuteRoundTrip(t *testing.T) {
 	}
 
 	// 還原
-	files, _ = collectEpubs(root)
+	files, _ = collectBooks(root, []string{".epub", ".pdf"})
 	p3 := buildRestorePlan(root, fl, files)
 	p3.checkExisting()
 	done, errs = p3.execute(logw)
@@ -146,7 +190,7 @@ func TestCheckExistingBlocksOverwrite(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "T0001_長阿含經.epub"), []byte("old"), 0o644)
 
 	fl := testFileList()
-	files, _ := collectEpubs(root)
+	files, _ := collectBooks(root, []string{".epub", ".pdf"})
 	p := buildPlan(root, fl, files)
 	p.checkExisting()
 	for _, it := range p.Items {

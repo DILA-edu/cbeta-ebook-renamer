@@ -1,4 +1,4 @@
-// cb-ren-bat：把 CBETA EPUB 的檔名從「經號」改成「經號_經名」。
+// cbeta-ebook-renamer：把 CBETA EPUB 的檔名從「經號」改成「經號_經名」。
 //
 // 用法最簡單的形式是把執行檔放進解壓後的 cbeta_epub_2026r2 資料夾裡直接執行，
 // 程式會自動找到同一層的 filelist_*.txt 對照表。
@@ -22,6 +22,7 @@ var (
 	flagRestore = flag.Bool("restore", false, "還原：把「經號_經名」改回「經號」")
 	flagLog     = flag.String("log", "rename_log.csv", "改名紀錄檔路徑，設為空字串則不產生")
 	flagList    = flag.Int("list", 20, "預覽時最多列出幾筆，設為 0 表示全部列出")
+	flagExt     = flag.String("ext", ".epub,.pdf", "要處理的副檔名，以逗號分隔")
 	flagVersion = flag.Bool("version", false, "顯示版本後結束")
 )
 
@@ -36,7 +37,7 @@ func main() {
 	flag.Parse()
 
 	if *flagVersion {
-		fmt.Printf("cb-ren-bat %s\n", version)
+		fmt.Printf("cbeta-ebook-renamer %s\n", version)
 		return
 	}
 
@@ -51,10 +52,10 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `cb-ren-bat %s — CBETA EPUB 檔名批次轉換工具
+	fmt.Fprintf(os.Stderr, `cbeta-ebook-renamer %s — CBETA EPUB 檔名批次轉換工具
 
 用法：
-  cb-ren-bat [選項] [cbeta_epub 資料夾路徑]
+  cbeta-ebook-renamer [選項] [cbeta_epub 資料夾路徑]
 
 不指定資料夾時，依序嘗試「執行檔所在資料夾」與「目前工作目錄」。
 
@@ -63,20 +64,20 @@ func usage() {
 	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, `
 範例：
-  cb-ren-bat                       # 放在 epub 資料夾裡直接執行
-  cb-ren-bat -dry-run ~/Downloads/cbeta_epub_2026r2
-  cb-ren-bat -yes ~/Downloads/cbeta_epub_2026r2
-  cb-ren-bat -restore ~/Downloads/cbeta_epub_2026r2
+  cbeta-ebook-renamer                       # 放在 epub 資料夾裡直接執行
+  cbeta-ebook-renamer -dry-run ~/Downloads/cbeta_epub_2026r2
+  cbeta-ebook-renamer -yes ~/Downloads/cbeta_epub_2026r2
+  cbeta-ebook-renamer -restore ~/Downloads/cbeta_epub_2026r2
 `)
 }
 
 func run(interactive bool) int {
-	fmt.Printf("cb-ren-bat %s — CBETA EPUB 檔名批次轉換工具\n\n", version)
+	fmt.Printf("cbeta-ebook-renamer %s — CBETA EPUB 檔名批次轉換工具\n\n", version)
 
 	root, err := resolveRoot(flag.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "錯誤：%v\n\n", err)
-		fmt.Fprintln(os.Stderr, "請把本程式放進解壓後的 cbeta_epub_XXXX 資料夾中執行，")
+		fmt.Fprintln(os.Stderr, "請把本程式放進解壓後的 cbeta_epub_XXXX 或 cbeta_pdf_X_XXXX 資料夾中執行，")
 		fmt.Fprintln(os.Stderr, "或是在命令列指定該資料夾的路徑。")
 		return 1
 	}
@@ -96,18 +97,25 @@ func run(interactive bool) int {
 	fmt.Printf("對照表　：%s（%d 筆）\n", filepath.Base(flPath), len(fl.Entries))
 	checkVersion(root, fl)
 
-	files, err := collectEpubs(root)
+	exts := parseExts(*flagExt)
+	if len(exts) == 0 {
+		fmt.Fprintln(os.Stderr, "錯誤：-ext 至少要指定一種副檔名。")
+		return 1
+	}
+	files, err := collectBooks(root, exts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "錯誤：掃描 epub 檔案失敗：%v\n", err)
+		fmt.Fprintf(os.Stderr, "錯誤：掃描檔案失敗：%v\n", err)
 		return 1
 	}
 	if len(files) == 0 {
-		fmt.Fprintln(os.Stderr, "\n錯誤：這個資料夾裡找不到任何 .epub 檔案。")
+		fmt.Fprintf(os.Stderr, "\n錯誤：這個資料夾裡找不到任何 %s 檔案。\n", strings.Join(exts, "、"))
 		return 1
 	}
-	fmt.Printf("EPUB 檔：%d 個\n", len(files))
-	if len(files) != len(fl.Entries) {
-		warnf("epub 數量(%d)與對照表筆數(%d)不一致，可能是解壓不完整或版本不符",
+	fmt.Printf("典籍檔案：%d 個（%s）\n", len(files), strings.Join(exts, "、"))
+	// PDF 版是分三次下載的，每一份都帶完整的對照表，
+	// 所以「檔案數比對照表少」是正常現象，只有多出來才值得警告。
+	if len(files) > len(fl.Entries) {
+		warnf("檔案數(%d)超過對照表筆數(%d)，請確認資料夾裡沒有混入其他來源的檔案",
 			len(files), len(fl.Entries))
 	}
 
@@ -127,7 +135,13 @@ func run(interactive bool) int {
 	c := plan.Counts()
 	fmt.Printf("\n待%s：%d　略過：%d　衝突：%d\n",
 		op, c[ActRename],
-		c[ActSkipDone]+c[ActSkipNoEntry]+c[ActSkipUnknown], c[ActConflict])
+		c[ActSkipDone]+c[ActSkipNoEntry]+c[ActSkipUnknown]+c[ActSkipJuan], c[ActConflict])
+	if c[ActSkipNoEntry] > 0 {
+		warnf("有 %d 個檔案的經號不在對照表中，已略過", c[ActSkipNoEntry])
+	}
+	if c[ActSkipJuan] > 0 {
+		warnf("有 %d 個檔案是按卷分檔（如 T0001_001），本版本尚未支援，已略過", c[ActSkipJuan])
+	}
 
 	if c[ActConflict] > 0 {
 		fmt.Println("\n衝突的檔案會原樣保留，不會被覆蓋：")
@@ -223,13 +237,30 @@ func resolveRoot(arg string) (string, error) {
 	return "", fmt.Errorf("找不到含有 filelist_*.txt 的資料夾")
 }
 
+// parseExts 把 "-ext .epub,.pdf" 轉成正規化後的副檔名清單。
+func parseExts(s string) []string {
+	var out []string
+	for _, e := range strings.Split(s, ",") {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e == "" {
+			continue
+		}
+		if !strings.HasPrefix(e, ".") {
+			e = "." + e
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func hasFileList(dir string) bool {
 	m, err := filepath.Glob(filepath.Join(dir, "filelist_*.txt"))
 	return err == nil && len(m) > 0
 }
 
-// cbeta_epub_2026r2 → 2026r2
-var reDirVersion = regexp.MustCompile(`cbeta_epub_(.+)$`)
+// cbeta_epub_2026r2 → 2026r2、cbeta_pdf_1_2026r2 → 2026r2
+// 中間的 _1 是 PDF 分三次下載的批次編號。
+var reDirVersion = regexp.MustCompile(`^cbeta_[a-z]+(?:_[0-9]+)?_(.+)$`)
 
 // checkVersion 比對資料夾名稱與對照表檔名中的版本字串是否一致。
 func checkVersion(root string, fl *FileList) {

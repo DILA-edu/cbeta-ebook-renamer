@@ -1,4 +1,4 @@
-BINARY := cb-ren-bat
+BINARY := cbeta-ebook-renamer
 VERSION := $(shell grep -o 'version = "[^"]*"' main.go | cut -d'"' -f2)
 LDFLAGS := -s -w
 PLATFORMS := darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/amd64

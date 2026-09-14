@@ -1,3 +1,3 @@
-module cb-ren-bat
+module cbeta-ebook-renamer
 
 go 1.21
