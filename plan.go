@@ -168,6 +168,12 @@ func buildRestorePlan(root string, fl *FileList, files []string) *Plan {
 				Action: ActSkipDone})
 			continue
 		}
+		// 與改名模式一樣要求經號存在於對照表，避免誤動到資料夾裡的其他檔案
+		if _, exists := fl.Entries[id]; !exists {
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipNoEntry,
+				Note: "對照表中沒有這個經號"})
+			continue
+		}
 		newName := id + ".epub"
 		key := dir + "\x00" + strings.ToLower(newName)
 		if prev, dup := taken[key]; dup {
@@ -242,6 +248,11 @@ func (p *Plan) execute(logw *logWriter) (int, []error) {
 	var errs []error
 	done := 0
 	for _, it := range p.Items {
+		// 衝突的項目雖然不處理，仍寫進紀錄，否則使用者關掉視窗就查不到了
+		if it.Action == ActConflict {
+			logw.write(it, "未處理（衝突）："+it.Note)
+			continue
+		}
 		if it.Action != ActRename {
 			continue
 		}

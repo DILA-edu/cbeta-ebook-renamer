@@ -42,15 +42,15 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
         run: |
+          # 執行檔一律叫 cb-ren-bat，平台資訊放在壓縮檔名上，
+          # 這樣 README 裡的指令對每個平台都是照抄就能用。
           EXT=""
           [ "$GOOS" = "windows" ] && EXT=".exe"
-          NAME="cb-ren-bat-${GOOS}-${GOARCH}${EXT}"
-          go build -trimpath -ldflags="-s -w" -o "$NAME" .
-          # 壓縮後上傳，順便附上說明文件
+          go build -trimpath -ldflags="-s -w" -o "cb-ren-bat${EXT}" .
           if [ "$GOOS" = "windows" ]; then
-            zip "cb-ren-bat-${GOOS}-${GOARCH}.zip" "$NAME" README.md
+            zip "cb-ren-bat-${GOOS}-${GOARCH}.zip" "cb-ren-bat${EXT}" README.md
           else
-            tar czf "cb-ren-bat-${GOOS}-${GOARCH}.tar.gz" "$NAME" README.md
+            tar czf "cb-ren-bat-${GOOS}-${GOARCH}.tar.gz" "cb-ren-bat${EXT}" README.md
           fi
       - uses: actions/upload-artifact@v4
         with:

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,15 @@ func TestRestorePlan(t *testing.T) {
 	}
 	if p.Items[1].Action != ActSkipDone {
 		t.Errorf("原本就是經號檔名的應略過，得到 %v", p.Items[1].Action)
+	}
+}
+
+// 還原模式不可以動到對照表中沒有的檔案（例如使用者自己放進來的書）。
+func TestRestorePlanSkipsUnknownID(t *testing.T) {
+	fl := testFileList()
+	p := buildRestorePlan("/root", fl, []string{"T/T9999_我自己的書.epub"})
+	if p.Items[0].Action != ActSkipNoEntry {
+		t.Errorf("對照表查無的經號不應還原，得到 %v", p.Items[0].Action)
 	}
 }
 
@@ -203,4 +213,39 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// 紀錄檔應該累加而不是每次覆蓋，否則還原會洗掉改名的對照紀錄。
+func TestLogWriterAppends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rename_log.csv")
+	it := Item{Dir: "T", OldName: "T0001.epub", NewName: "T0001_長阿含經.epub"}
+
+	w1, err := newLogWriter(path, "改名")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w1.write(it, "成功")
+	w1.close()
+
+	w2, err := newLogWriter(path, "還原")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w2.write(Item{Dir: "T", OldName: it.NewName, NewName: it.OldName}, "成功")
+	w2.close()
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+	if !strings.Contains(content, "改名") || !strings.Contains(content, "還原") {
+		t.Errorf("兩次執行的紀錄都應保留，實際內容：\n%s", content)
+	}
+	if n := strings.Count(content, "時間,操作"); n != 1 {
+		t.Errorf("標題列應該只有一行，實際有 %d 行", n)
+	}
+	if n := strings.Count(content, "\ufeff"); n != 1 {
+		t.Errorf("BOM 應該只出現在檔首一次，實際有 %d 個", n)
+	}
 }

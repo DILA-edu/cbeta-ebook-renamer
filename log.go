@@ -17,19 +17,28 @@ func newLogWriter(path, op string) (*logWriter, error) {
 	if path == "" {
 		return &logWriter{}, nil
 	}
-	f, err := os.Create(path)
+	// 以附加模式開啟：改名與後續的還原紀錄都要留著，才能追溯完整經過。
+	_, statErr := os.Stat(path)
+	isNew := statErr != nil
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	// 加上 BOM，Windows 的 Excel 才不會把 UTF-8 中文讀成亂碼。
-	if _, err := f.WriteString("\ufeff"); err != nil {
-		f.Close()
-		return nil, err
+	if isNew {
+		// 加上 BOM，Windows 的 Excel 才不會把 UTF-8 中文讀成亂碼。
+		if _, err := f.WriteString("\ufeff"); err != nil {
+			f.Close()
+			return nil, err
+		}
 	}
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"時間", "操作", "資料夾", "原檔名", "新檔名", "結果"}); err != nil {
-		f.Close()
-		return nil, err
+	if isNew {
+		if err := w.Write([]string{"時間", "操作", "資料夾", "原檔名", "新檔名", "結果"}); err != nil {
+			f.Close()
+			return nil, err
+		}
+		w.Flush()
 	}
 	return &logWriter{f: f, w: w, op: op}, nil
 }
@@ -54,5 +63,7 @@ func (l *logWriter) close() {
 	}
 	if l.f != nil {
 		l.f.Close()
+		l.f = nil
+		l.w = nil
 	}
 }
