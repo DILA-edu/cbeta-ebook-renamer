@@ -50,7 +50,7 @@ jobs:
             windows) EXT=".exe" ;;
             darwin)  EXT=".command" ;;
           esac
-          go build -trimpath -ldflags="-s -w" -o "cbeta-ebook-renamer${EXT}" .
+          go build -trimpath -ldflags="-s -w" -o "cbeta-ebook-renamer${EXT}" ./cmd/cbeta-ebook-renamer
           # 一律打包壓縮檔：瀏覽器下載裸執行檔會失去執行權限，zip 與 tar 則會保留。
           if [ "$GOOS" = "linux" ]; then
             tar czf "cbeta-ebook-renamer-${GOOS}-${GOARCH}.tar.gz" "cbeta-ebook-renamer${EXT}" README.md

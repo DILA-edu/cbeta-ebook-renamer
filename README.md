@@ -152,7 +152,7 @@ cbeta-ebook-renamer -restore ~/Downloads/cbeta_epub_2026r2   # 改回原本的�
 
 ```bash
 go test ./...    # 執行測試
-go build         # 建置目前平台
+make build       # 建置目前平台
 make dist        # 建置全部平台到 dist/
 ```
 

@@ -1,5 +1,5 @@
 BINARY := cbeta-ebook-renamer
-VERSION := $(shell grep -o 'version = "[^"]*"' main.go | cut -d'"' -f2)
+VERSION := $(shell grep -o 'version = "[^"]*"' cmd/cbeta-ebook-renamer/main.go | cut -d'"' -f2)
 LDFLAGS := -s -w
 PLATFORMS := darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/amd64
 
@@ -15,7 +15,7 @@ vet:
 	GOOS=windows go vet ./...
 
 build:
-	go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) .
+	go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/cbeta-ebook-renamer
 
 # 建置全部平台並打包到 dist/。
 # 執行檔與壓縮檔的命名規則與 .github/workflows/release.yml 相同，
@@ -40,7 +40,7 @@ dist: test
 		echo "building $$os/$$arch"; \
 		rm -f dist/stage/*; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
-			go build -trimpath -ldflags="$(LDFLAGS)" -o dist/stage/$(BINARY)$$ext . || exit 1; \
+			go build -trimpath -ldflags="$(LDFLAGS)" -o dist/stage/$(BINARY)$$ext ./cmd/cbeta-ebook-renamer || exit 1; \
 		cp README.md dist/stage/; \
 		base=$(BINARY)-$(VERSION)-$$os-$$arch; \
 		if [ "$$os" = "linux" ]; then \
