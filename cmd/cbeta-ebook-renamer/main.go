@@ -1,4 +1,7 @@
-// cbeta-ebook-renamer：把 CBETA EPUB 的檔名從「經號」改成「經號_經名」。
+// cbeta-ebook-renamer：把 CBETA 電子書的名稱從「經號」改成「經號_經名」。
+//
+// epub 與 pdf 是一部典籍一個檔案，改的是檔名；
+// docx 與 odt 是一部典籍一個資料夾、裡面再按卷分檔，改的是資料夾名，卷檔維持原名。
 //
 // 用法最簡單的形式是把執行檔放進解壓後的 cbeta_epub_2026r2 資料夾裡直接執行，
 // 程式會自動找到同一層的 filelist_*.txt 對照表。
@@ -14,7 +17,7 @@ import (
 	"strings"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 var (
 	flagDryRun  = flag.Bool("dry-run", false, "只顯示預覽，不實際改名")
@@ -22,7 +25,7 @@ var (
 	flagRestore = flag.Bool("restore", false, "還原：把「經號_經名」改回「經號」")
 	flagLog     = flag.String("log", "rename_log.csv", "改名紀錄檔路徑，設為空字串則不產生")
 	flagList    = flag.Int("list", 20, "預覽時最多列出幾筆，設為 0 表示全部列出")
-	flagExt     = flag.String("ext", ".epub,.pdf", "要處理的副檔名，以逗號分隔")
+	flagExt     = flag.String("ext", ".epub,.pdf,.docx,.odt", "要處理的副檔名，以逗號分隔")
 	flagVersion = flag.Bool("version", false, "顯示版本後結束")
 )
 
@@ -52,10 +55,10 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `cbeta-ebook-renamer %s — CBETA EPUB 檔名批次轉換工具
+	fmt.Fprintf(os.Stderr, `cbeta-ebook-renamer %s — CBETA 電子書名稱批次轉換工具
 
 用法：
-  cbeta-ebook-renamer [選項] [cbeta_epub 資料夾路徑]
+  cbeta-ebook-renamer [選項] [CBETA 電子書資料夾路徑]
 
 不指定資料夾時，依序嘗試「執行檔所在資料夾」與「目前工作目錄」。
 
@@ -68,17 +71,22 @@ func usage() {
   cbeta-ebook-renamer -dry-run ~/Downloads/cbeta_epub_2026r2
   cbeta-ebook-renamer -yes ~/Downloads/cbeta_epub_2026r2
   cbeta-ebook-renamer -restore ~/Downloads/cbeta_epub_2026r2
+  cbeta-ebook-renamer -dry-run ~/Downloads/docx      # docx/odt 改的是經號資料夾
 `)
 }
 
 func run(interactive bool) int {
-	fmt.Printf("cbeta-ebook-renamer %s — CBETA EPUB 檔名批次轉換工具\n\n", version)
+	fmt.Printf("cbeta-ebook-renamer %s — CBETA 電子書名稱批次轉換工具\n\n", version)
 
 	root, err := resolveRoot(flag.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "錯誤：%v\n\n", err)
-		fmt.Fprintln(os.Stderr, "請把本程式放進解壓後的 cbeta_epub_XXXX 或 cbeta_pdf_X_XXXX 資料夾中執行，")
+		fmt.Fprintln(os.Stderr, "請把本程式放進解壓後的電子書資料夾中執行（epub 是 cbeta_epub_XXXX、")
+		fmt.Fprintln(os.Stderr, "pdf 是 cbeta_pdf_X_XXXX、docx 與 odt 則是含有 T/、X/ 的那一層），")
 		fmt.Fprintln(os.Stderr, "或是在命令列指定該資料夾的路徑。")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "註：docx 與 odt 的下載檔目前不含 filelist_*.txt 對照表，")
+		fmt.Fprintln(os.Stderr, "請先從 epub 或 pdf 版的壓縮檔中複製一份過來。")
 		return 1
 	}
 
@@ -111,7 +119,17 @@ func run(interactive bool) int {
 		fmt.Fprintf(os.Stderr, "\n錯誤：這個資料夾裡找不到任何 %s 檔案。\n", strings.Join(exts, "、"))
 		return 1
 	}
-	fmt.Printf("典籍檔案：%d 個（%s）\n", len(files), strings.Join(exts, "、"))
+	dirCount := 0
+	for _, bp := range files {
+		if bp.IsDir {
+			dirCount++
+		}
+	}
+	if dirCount > 0 {
+		fmt.Printf("典籍項目：%d 個（其中 %d 個是按卷分檔的經號資料夾）\n", len(files), dirCount)
+	} else {
+		fmt.Printf("典籍檔案：%d 個（%s）\n", len(files), strings.Join(exts, "、"))
+	}
 	// PDF 版是分三次下載的，每一份都帶完整的對照表，
 	// 所以「檔案數比對照表少」是正常現象，只有多出來才值得警告。
 	if len(files) > len(fl.Entries) {
@@ -140,11 +158,11 @@ func run(interactive bool) int {
 		warnf("有 %d 個檔案的經號不在對照表中，已略過", c[ActSkipNoEntry])
 	}
 	if c[ActSkipJuan] > 0 {
-		warnf("有 %d 個檔案是按卷分檔（如 T0001_001），本版本尚未支援，已略過", c[ActSkipJuan])
+		warnf("有 %d 個按卷分檔（如 T0001_001）不在任何經號資料夾底下，已略過", c[ActSkipJuan])
 	}
 
 	if c[ActConflict] > 0 {
-		fmt.Println("\n衝突的檔案會原樣保留，不會被覆蓋：")
+		fmt.Println("\n衝突的項目會原樣保留，不會被覆蓋：")
 		n := 0
 		for _, it := range plan.Items {
 			if it.Action != ActConflict {
@@ -155,7 +173,7 @@ func run(interactive bool) int {
 				fmt.Printf("  …另有 %d 筆\n", c[ActConflict]-*flagList)
 				break
 			}
-			fmt.Printf("  %s/%s → %s（%s）\n", it.Dir, it.OldName, it.NewName, it.Note)
+			fmt.Printf("  %s/%s → %s（%s）\n", it.Dir, it.DisplayOld(), it.DisplayNew(), it.Note)
 		}
 	}
 	plan.warnLongPaths()
@@ -168,7 +186,7 @@ func run(interactive bool) int {
 		fmt.Println("\n(-dry-run 模式，未實際更動任何檔案)")
 		return 0
 	}
-	if !*flagYes && !confirm(fmt.Sprintf("\n確定要%s這 %d 個檔案嗎？", op, c[ActRename])) {
+	if !*flagYes && !confirm(fmt.Sprintf("\n確定要%s這 %d 個項目嗎？", op, c[ActRename])) {
 		fmt.Println("已取消，未更動任何檔案。")
 		return 0
 	}
@@ -188,12 +206,12 @@ func run(interactive bool) int {
 	done, errs := plan.execute(logw)
 	logw.close()
 
-	fmt.Printf("\n完成：%s %d 個檔案。\n", op, done)
+	fmt.Printf("\n完成：%s %d 個項目。\n", op, done)
 	if logPath != "" {
 		fmt.Printf("紀錄已寫入：%s\n", logPath)
 	}
 	if len(errs) > 0 {
-		fmt.Fprintf(os.Stderr, "\n有 %d 個檔案處理失敗：\n", len(errs))
+		fmt.Fprintf(os.Stderr, "\n有 %d 個項目處理失敗：\n", len(errs))
 		for i, e := range errs {
 			if i >= 10 {
 				fmt.Fprintf(os.Stderr, "  …另有 %d 筆\n", len(errs)-10)
@@ -289,7 +307,7 @@ func printPreview(plan *Plan) {
 		if dir != "" {
 			dir += string(filepath.Separator)
 		}
-		line := fmt.Sprintf("  %s%s → %s", dir, it.OldName, it.NewName)
+		line := fmt.Sprintf("  %s%s → %s", dir, it.DisplayOld(), it.DisplayNew())
 		if it.Note != "" {
 			line += "  [" + it.Note + "]"
 		}

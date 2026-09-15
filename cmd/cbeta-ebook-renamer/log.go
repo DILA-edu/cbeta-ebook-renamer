@@ -51,9 +51,10 @@ func (l *logWriter) write(it Item, result string) {
 	if dir == "" {
 		dir = "."
 	}
+	// 資料夾項目的名稱後面帶斜線，紀錄檔中才分得出改的是資料夾還是檔案
 	_ = l.w.Write([]string{
 		time.Now().Format("2006-01-02 15:04:05"),
-		l.op, dir, it.OldName, it.NewName, result,
+		l.op, dir, it.DisplayOld(), it.DisplayNew(), result,
 	})
 }
 

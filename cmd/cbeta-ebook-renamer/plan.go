@@ -17,7 +17,7 @@ const (
 	ActSkipDone                  // 已經是目標檔名，不需處理
 	ActSkipNoEntry               // 對照表中查無此經號
 	ActSkipUnknown               // 檔名不符合經號樣式，無法判斷
-	ActSkipJuan                  // 按卷分檔（docx/odt），本版本不處理
+	ActSkipJuan                  // 按卷分檔（docx/odt），不單獨處理
 	ActConflict                  // 目標檔名衝突，不予處理
 )
 
@@ -39,14 +39,33 @@ func (a Action) String() string {
 	return "未知"
 }
 
-// Item 是一個典籍檔案的處理計畫。
+// Item 是一個典籍項目的處理計畫。
+// 項目可能是單一檔案（epub/pdf），也可能是一整個經號資料夾（docx/odt）。
 type Item struct {
-	Dir     string // 相對根目錄的子資料夾，如 T
+	Dir     string // 相對根目錄的上層資料夾，如 T
 	OldName string
 	NewName string
 	ID      string
+	IsDir   bool // true 表示改名對象是資料夾而非檔案
 	Action  Action
 	Note    string
+}
+
+// DisplayOld 與 DisplayNew 在資料夾項目後面補上斜線，
+// 讓使用者在預覽與紀錄檔中一眼看出改的是資料夾。
+func (it Item) DisplayOld() string { return it.OldName + it.dirMark() }
+func (it Item) DisplayNew() string {
+	if it.NewName == "" {
+		return ""
+	}
+	return it.NewName + it.dirMark()
+}
+
+func (it Item) dirMark() string {
+	if it.IsDir {
+		return "/"
+	}
+	return ""
 }
 
 // Plan 是整批作業的計畫。
@@ -64,10 +83,19 @@ func (p *Plan) Counts() map[Action]int {
 	return c
 }
 
-// collectBooks 掃出根目錄下所有符合指定副檔名的檔案。
+// bookPath 是掃描階段找到的一個典籍項目。
+// epub 與 pdf 是一部典籍一個檔案；docx 與 odt 是一部典籍一個資料夾，
+// 資料夾裡再按卷分成 T0001_001.docx、T0001_002.docx……
+type bookPath struct {
+	Rel   string // 相對根目錄的路徑
+	IsDir bool
+}
+
+// collectBooks 掃出根目錄下所有的典籍項目：
+// 符合指定副檔名的檔案，以及以經號命名、裡面裝著這些檔案的資料夾。
 // exts 需為小寫、含點，例如 []string{".epub", ".pdf"}。
-func collectBooks(root string, exts []string) ([]string, error) {
-	var found []string
+func collectBooks(root string, exts []string) ([]bookPath, error) {
+	var found []bookPath
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			warnf("讀取 %s 失敗：%v", path, err)
@@ -75,8 +103,24 @@ func collectBooks(root string, exts []string) ([]string, error) {
 		}
 		name := d.Name()
 		if d.IsDir() {
+			if path == root {
+				return nil
+			}
 			// 略過隱藏資料夾（.git、.DS_Store 之類的環境產物）
-			if path != root && strings.HasPrefix(name, ".") {
+			if strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			// docx/odt 的典籍資料夾：名稱是經號（或已改成「經號_經名」），
+			// 而且裡面直接放著目標副檔名的檔案。
+			// 只看名字不夠——藏經代碼資料夾（T、X）剛好不含數字所以不會誤判，
+			// 但仍以「裡面有沒有東西」作為判準比較穩當。
+			if _, kind := parseBase(name); (kind == kindID || kind == kindRenamed) && dirHasBook(path, exts) {
+				rel, err := filepath.Rel(root, path)
+				if err != nil {
+					return filepath.SkipDir
+				}
+				found = append(found, bookPath{Rel: rel, IsDir: true})
+				// 卷檔維持原名，不必再走進去，否則每部典籍會多出幾十筆「按卷分檔」雜訊
 				return filepath.SkipDir
 			}
 			return nil
@@ -86,15 +130,29 @@ func collectBooks(root string, exts []string) ([]string, error) {
 			if err != nil {
 				return nil
 			}
-			found = append(found, rel)
+			found = append(found, bookPath{Rel: rel})
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(found)
+	sort.Slice(found, func(i, j int) bool { return found[i].Rel < found[j].Rel })
 	return found, nil
+}
+
+// dirHasBook 檢查資料夾中是否直接放著符合副檔名的檔案。
+func dirHasBook(dir string, exts []string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && matchExt(e.Name(), exts) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchExt(name string, exts []string) bool {
@@ -108,37 +166,32 @@ func matchExt(name string, exts []string) bool {
 }
 
 // buildPlan 規劃「經號 → 經號_經名」的改名作業。
-func buildPlan(root string, fl *FileList, files []string) *Plan {
+func buildPlan(root string, fl *FileList, files []bookPath) *Plan {
 	p := &Plan{Root: root}
 	// 以「資料夾 + 小寫目標檔名」為鍵偵測衝突。
 	// 用小寫是因為 APFS 與 NTFS 預設不分大小寫，只比對原字串會漏抓。
 	taken := make(map[string]string)
 
-	for _, rel := range files {
-		dir := filepath.Dir(rel)
-		if dir == "." {
-			dir = ""
-		}
-		old := filepath.Base(rel)
-		ext := filepath.Ext(old)
-		base := strings.TrimSuffix(old, ext)
+	for _, bp := range files {
+		dir, old, ext, base := splitBookPath(bp)
 
 		id, kind := parseBase(base)
 		switch kind {
 		case kindUnknown:
-			p.Items = append(p.Items, Item{Dir: dir, OldName: old, Action: ActSkipUnknown})
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, IsDir: bp.IsDir,
+				Action: ActSkipUnknown})
 			continue
 		case kindJuan:
 			// docx/odt 的按卷分檔，形狀與「經號_經名」相同但語意不同，
 			// 改名會把卷號當成經名蓋掉，必須明確跳過。
-			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipJuan,
-				Note: "按卷分檔的檔案，本版本尚未支援"})
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, IsDir: bp.IsDir,
+				Action: ActSkipJuan, Note: "按卷分檔的檔案，請以它所在的經號資料夾為單位處理"})
 			continue
 		}
 		entry, exists := fl.Entries[id]
 		if !exists {
-			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipNoEntry,
-				Note: "對照表中沒有這個經號"})
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, IsDir: bp.IsDir,
+				Action: ActSkipNoEntry, Note: "對照表中沒有這個經號"})
 			continue
 		}
 		newName, notes := targetName(id, entry.Title, ext)
@@ -146,73 +199,84 @@ func buildPlan(root string, fl *FileList, files []string) *Plan {
 
 		if old == newName {
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: newName, ID: id,
-				Action: ActSkipDone})
+				IsDir: bp.IsDir, Action: ActSkipDone})
 			continue
 		}
 		if kind == kindRenamed {
 			// 已改過名但與目前對照表不一致，可能是換了新版 filelist，仍予以更新。
-			note = joinNote(note, "既有檔名與對照表不符，將更新")
+			note = joinNote(note, "既有名稱與對照表不符，將更新")
 		}
 
 		key := dir + "\x00" + strings.ToLower(newName)
 		if prev, dup := taken[key]; dup {
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: newName, ID: id,
-				Action: ActConflict, Note: "目標檔名與 " + prev + " 相同"})
+				IsDir: bp.IsDir, Action: ActConflict, Note: "目標名稱與 " + prev + " 相同"})
 			continue
 		}
 		taken[key] = old
 		p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: newName, ID: id,
-			Action: ActRename, Note: note})
+			IsDir: bp.IsDir, Action: ActRename, Note: note})
 	}
 	return p
 }
 
+// splitBookPath 把掃描到的相對路徑拆成「上層資料夾、原名稱、副檔名、主名稱」。
+// 資料夾項目一律沒有副檔名——絕不能對資料夾名呼叫 filepath.Ext，
+// 否則經名中若出現點號就會被當成副檔名切掉。
+func splitBookPath(bp bookPath) (dir, old, ext, base string) {
+	dir = filepath.Dir(bp.Rel)
+	if dir == "." {
+		dir = ""
+	}
+	old = filepath.Base(bp.Rel)
+	if bp.IsDir {
+		return dir, old, "", old
+	}
+	ext = filepath.Ext(old)
+	return dir, old, ext, strings.TrimSuffix(old, ext)
+}
+
 // buildRestorePlan 規劃還原作業：「經號_經名 → 經號」。
-func buildRestorePlan(root string, fl *FileList, files []string) *Plan {
+func buildRestorePlan(root string, fl *FileList, files []bookPath) *Plan {
 	p := &Plan{Root: root}
 	taken := make(map[string]string)
 
-	for _, rel := range files {
-		dir := filepath.Dir(rel)
-		if dir == "." {
-			dir = ""
-		}
-		old := filepath.Base(rel)
-		ext := filepath.Ext(old)
-		base := strings.TrimSuffix(old, ext)
+	for _, bp := range files {
+		dir, old, ext, base := splitBookPath(bp)
 
 		id, kind := parseBase(base)
 		switch kind {
 		case kindUnknown:
-			p.Items = append(p.Items, Item{Dir: dir, OldName: old, Action: ActSkipUnknown})
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, IsDir: bp.IsDir,
+				Action: ActSkipUnknown})
 			continue
 		case kindJuan:
 			// 若誤把卷號當成經名還原，T0001_001.docx 會變成 T0001.docx，卷號就沒了
-			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipJuan,
-				Note: "按卷分檔的檔案，本版本尚未支援"})
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, IsDir: bp.IsDir,
+				Action: ActSkipJuan, Note: "按卷分檔的檔案，請以它所在的經號資料夾為單位處理"})
 			continue
 		}
 		if kind == kindID {
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: old, ID: id,
-				Action: ActSkipDone})
+				IsDir: bp.IsDir, Action: ActSkipDone})
 			continue
 		}
 		// 與改名模式一樣要求經號存在於對照表，避免誤動到資料夾裡的其他檔案
 		if _, exists := fl.Entries[id]; !exists {
-			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, Action: ActSkipNoEntry,
-				Note: "對照表中沒有這個經號"})
+			p.Items = append(p.Items, Item{Dir: dir, OldName: old, ID: id, IsDir: bp.IsDir,
+				Action: ActSkipNoEntry, Note: "對照表中沒有這個經號"})
 			continue
 		}
 		newName := id + ext
 		key := dir + "\x00" + strings.ToLower(newName)
 		if prev, dup := taken[key]; dup {
 			p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: newName, ID: id,
-				Action: ActConflict, Note: "目標檔名與 " + prev + " 相同"})
+				IsDir: bp.IsDir, Action: ActConflict, Note: "目標名稱與 " + prev + " 相同"})
 			continue
 		}
 		taken[key] = old
 		p.Items = append(p.Items, Item{Dir: dir, OldName: old, NewName: newName, ID: id,
-			Action: ActRename})
+			IsDir: bp.IsDir, Action: ActRename})
 	}
 	return p
 }
@@ -249,10 +313,15 @@ func (p *Plan) warnLongPaths() int {
 			continue
 		}
 		full := filepath.Join(p.Root, it.Dir, it.NewName)
-		if len([]rune(full)) > 240 {
+		length := len([]rune(full))
+		if it.IsDir {
+			// 使用者真正打開的是資料夾裡的卷檔，路徑還要再長一層
+			length += len([]rune(string(filepath.Separator) + it.ID + "_000.docx"))
+		}
+		if length > 240 {
 			n++
 			if n <= 5 {
-				warnf("路徑偏長（%d 字元），Windows 舊版可能無法開啟：%s", len([]rune(full)), full)
+				warnf("路徑偏長（%d 字元），Windows 舊版可能無法開啟：%s", length, full)
 			}
 		}
 	}
