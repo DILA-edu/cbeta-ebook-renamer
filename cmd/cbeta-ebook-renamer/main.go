@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 var (
 	flagDryRun  = flag.Bool("dry-run", false, "只顯示預覽，不實際改名")
@@ -61,6 +61,8 @@ func usage() {
   cbeta-ebook-renamer [選項] [CBETA 電子書資料夾路徑]
 
 不指定資料夾時，依序嘗試「執行檔所在資料夾」與「目前工作目錄」。
+不帶任何選項直接執行（例如雙擊）時，若資料夾裡的名稱都已經加過經名，
+會改問要不要還原成只有經號，不必自己補上 -restore。
 
 選項：
 `, version)
@@ -137,14 +139,49 @@ func run(interactive bool) int {
 			len(files), len(fl.Entries))
 	}
 
-	op := "改名"
-	var plan *Plan
 	if *flagRestore {
-		op = "還原"
-		plan = buildRestorePlan(root, fl, files)
-	} else {
-		plan = buildPlan(root, fl, files)
+		code, nothing := runPlan(root, buildRestorePlan(root, fl, files), "還原")
+		if nothing {
+			fmt.Println("\n沒有需要處理的檔案，結束。")
+		}
+		return code
 	}
+
+	plan := buildPlan(root, fl, files)
+	code, nothing := runPlan(root, plan, "改名")
+	if !nothing {
+		return code
+	}
+
+	// 正向沒有任何可改的項目時，若整批檔名都已經加過經名，
+	// 雙擊執行的使用者多半是想還原——他們沒有辦法自己補上 -restore。
+	if !interactive || !looksRenamed(plan.Counts()) {
+		fmt.Println("\n沒有需要處理的檔案，結束。")
+		return code
+	}
+	fmt.Println("\n這個資料夾的檔名看起來已經加上經名了。")
+	if !confirm("要還原成只有經號的檔名嗎？") {
+		fmt.Println("已取消，未更動任何檔案。")
+		return 0
+	}
+	code, nothing = runPlan(root, buildRestorePlan(root, fl, files), "還原")
+	if nothing {
+		fmt.Println("\n沒有需要處理的檔案，結束。")
+	}
+	return code
+}
+
+// looksRenamed 判斷這個資料夾是不是「已經整批改過名」的狀態：
+// 正向計畫裡沒有任何待改名的項目，卻有一批項目是「已經是目標檔名」。
+// 部分改過、部分沒改的混合狀態不算，那種情況照舊直接走正向改名。
+func looksRenamed(c map[Action]int) bool {
+	return c[ActRename] == 0 && c[ActSkipDone] > 0
+}
+
+// runPlan 把一份計畫跑完：印預覽、統計、確認、實際執行。
+// nothing 為 true 表示這份計畫沒有任何待處理的項目，
+// 結束訊息交由呼叫端決定，因為呼叫端可能還想改問別的。
+func runPlan(root string, plan *Plan, op string) (code int, nothing bool) {
 	plan.checkExisting()
 
 	fmt.Printf("\n── %s預覽 ─────────────────────────\n", op)
@@ -179,16 +216,15 @@ func run(interactive bool) int {
 	plan.warnLongPaths()
 
 	if c[ActRename] == 0 {
-		fmt.Println("\n沒有需要處理的檔案，結束。")
-		return 0
+		return 0, true
 	}
 	if *flagDryRun {
 		fmt.Println("\n(-dry-run 模式，未實際更動任何檔案)")
-		return 0
+		return 0, false
 	}
 	if !*flagYes && !confirm(fmt.Sprintf("\n確定要%s這 %d 個項目嗎？", op, c[ActRename])) {
 		fmt.Println("已取消，未更動任何檔案。")
-		return 0
+		return 0, false
 	}
 
 	logPath := *flagLog
@@ -219,9 +255,9 @@ func run(interactive bool) int {
 			}
 			fmt.Fprintf(os.Stderr, "  %v\n", e)
 		}
-		return 1
+		return 1, false
 	}
-	return 0
+	return 0, false
 }
 
 // resolveRoot 決定要處理哪個資料夾。
@@ -318,17 +354,22 @@ func printPreview(plan *Plan) {
 	}
 }
 
+// 所有互動輸入共用同一個 reader。bufio 會預讀一整塊，
+// 每問一個問題就新建一個 reader 的話，一次執行中問到第二個問題時，
+// 答案早已被前一個 reader 讀進緩衝區丟掉了。
+var stdin = bufio.NewReader(os.Stdin)
+
 func confirm(prompt string) bool {
 	fmt.Printf("%s [y/N] ", prompt)
-	sc := bufio.NewScanner(os.Stdin)
-	if !sc.Scan() {
+	line, err := stdin.ReadString('\n')
+	if line == "" && err != nil {
 		return false
 	}
-	ans := strings.ToLower(strings.TrimSpace(sc.Text()))
+	ans := strings.ToLower(strings.TrimSpace(line))
 	return ans == "y" || ans == "yes"
 }
 
 func pause() {
 	fmt.Print("\n按 Enter 鍵結束…")
-	bufio.NewReader(os.Stdin).ReadString('\n')
+	stdin.ReadString('\n')
 }
