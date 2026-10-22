@@ -1,3 +1,3 @@
 module cbeta-ebook-renamer
 
-go 1.21
+go 1.27
