@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-const version = "1.2.0"
+const version = "1.2.1"
 
 var (
 	flagDryRun  = flag.Bool("dry-run", false, "只顯示預覽，不實際改名")
