@@ -219,7 +219,7 @@ cbeta-ebook-renamer -dry-run ~/Downloads/docx                # docx/odt 改的�
 
 ## 從原始碼建置
 
-需要 [Go](https://go.dev/dl/) 1.21 以上。
+需要 [Go](https://go.dev/dl/) 1.27 以上。
 
 ```bash
 go test ./...    # 執行測試
